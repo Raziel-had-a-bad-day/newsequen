@@ -428,6 +428,8 @@ const char words[10] = "HELLOWORLD";
 uint8_t adc_values[5]={15,15,15,15,0} ;  // adc values storage
 uint8_t position; // lcd cursor
   uint16_t play_sample[1025]={} ;  //sample storage  , big better
+ int16_t play_delay[2050]={} ;  //delay line .use lower sample rate ,signed
+uint16_t delay_point;
 volatile uint16_t sample_point; // pointer for sample array
 volatile uint8_t lcd_isr;
  volatile  uint16_t play_hold;
@@ -525,7 +527,7 @@ uint8_t seq_loop[7]; //loop positions
 
 //new stuff///////////////////////////////////////////////////////////////////////////////////////////////////////
 float filter_accus[15];  // hold floats for filter
-float filter_hold[5];  //holds some feedback related stuff
+float filter_hold[10];  //holds some feedback related stuff
 float freq_point[4]; // multiplier coeff
 uint16_t lfo_value[5]={0,0,0,0}; //  lfo value hold
 int16_t lfo_output[5]; // lfo out 0-2047 normally
@@ -629,6 +631,7 @@ uint16_t adsr_countup[11];  //holds isr count on notes ,
 float midi_lut[51]={65.4064,0}; //start with C2-c6
 float sample_build[11]; // float based sample accu for interpolation
 uint8_t popup_ref2; // store text pointer for feedback
+int32_t delay_accu[10]; //keep stuff for delay
 
 uint8_t gfx_mod; // jump enc line for faster update , just flag
 uint16_t gfx_counter[6]={0,0,0,0,0}; // just upcounter for gfx ram bytes
@@ -1779,6 +1782,7 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 										
 									 // sample section with float
 										float s_temp; // hold float out 0-512 different speeds , i is ref pos
+										float s_temp2;
 										float freq_jump= freq_lookup+sample_build[0];  //add to accu pointer
 										sample_build[0]=freq_jump;  //store
 										
@@ -1791,11 +1795,14 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 										int16_t s_bit2=sine_block2[(freq_jump2+1)&511]-20000; //next sample
 									
 									s_temp= s_bit1+ (s_frac* (s_bit2-s_bit1));  // y1-y0 , good
+										
+										
+										
 										sample_accus[3]= s_temp;
-									
-										
-										
-										
+									//play_delay[delay_point]=sample_accus[3];
+									//play_delay[delay_point]=(sample_accus[3]+play_delay[delay_point]+play_delay[(delay_point+500)&1023])/2; 
+									//play_delay[delay_point]=((sample_accus[3])+play_delay[delay_point])/2;  // write current to mem
+									//play_delay[delay_point]=(sample_accus[3]+(play_delay[(delay_point)+1023]&1023))/2; 
 										
 										//sample_Accu[3]=0;
 										sample_Accu[3]=sample_accus[3]<<6; // push up
@@ -1858,6 +1865,32 @@ sample_Accu[1]=sample_Accu[0];
 				sample_Accu[2] =filter_accus[10]; //out
 				filter_accus[12]=filter_accus[10]; //write back new value
 				
+				////////////////////////////// delay section, very heavy esp w float  /////////////////////////
+				//s_temp=sample_Accu[2]>>8; // shift to 16 bit
+				
+				int32_t delayin_accu=sample_Accu[2]>>8;  // input
+				
+				if ((i&3)==1) { delay_point=(delay_point+1)&2047; //advance every 4  step slower isnt any better just longer delay
+				uint16_t delay_tpointer=(delay_point+1)&2047;  // stores location for delay lenght / 1 is max delay
+										
+				int32_t delayout_accu;						
+				int32_t delayset_accu;						
+				int16_t delay_old=play_delay[delay_tpointer];
+			
+				
+									delayset_accu=(delay_old*10)+(delayin_accu*6); // feedback only using delayed audio
+									play_delay[delay_point]=delayset_accu>>4; // copy back
+									delay_accu[0]=delay_old; //delay only output 
+									delay_accu[1]=((delay_accu[0]<<1)+(delay_accu[1]*6))>>3;//with low pass(undersampled)
+				}
+									// below only needed to run always
+									
+								
+									sample_Accu[2]=(delayin_accu*8)+(delay_accu[1]*248); // little buzzy needs filter still or oversample
+									
+									
+
+/////////////////////////delay end////////////////////////////
 
 filter_Accu=0;
 filter_Accu=(sample_Accu[0]+sample_Accu[2])>>8; //filter + drum out
