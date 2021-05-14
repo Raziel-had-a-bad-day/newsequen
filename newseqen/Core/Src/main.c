@@ -1627,7 +1627,7 @@ lfo_out[l]=freq_temp+8195; // all ok
 
 	float k_hold=lfo_out[0];
 	
-	//freq_point[0]=(3.6*k_hold) - (1.6*k_hold*k_hold) -1; // tune for a linear input,dunno ,not much ?
+	// pole_1=(3.6*k_hold) - (1.6*k_hold*k_hold) -1; // tune for a linear input,dunno ,not much ?
 	
 	freq_point[0]=k_hold*0.00006435; //sine seem to overload at fully open but only with filter engaged 
 
@@ -1734,6 +1734,8 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 		sample_Accu[3]=0; // reset to 0 mani sample hold
 		sample_Accu[4]=0; // reset to 0 mani sample hold
 		sample_Accu[5]=0; // reset to 0 mani sample hold
+	//sample_Accu[]={0,0,0,0,0};
+	
 	for (mask_i=0;mask_i<5;mask_i++)	{							// calc detune , slow ,also creates notes
 
 		if (note_channel[mask_i]) {tune_Accu=sample_Noteadd[MajorNote[note_channel[mask_i]]];   note_tuned[mask_i]=(tune_Accu);}
@@ -1755,7 +1757,7 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 
 		sample_accus[1] = sample_accus[1] + note_tuned[1];  // normal adder full volume
 			//	if (!(note_channel[0]))   sample_accus[1] =0;  // turn off with vel now , maybe use mask
-				if (sample_accus[1]>524287) sample_accus[1] =-sample_accus[1] ; // faster >  than &  ,strange
+				if (sample_accus[1]>524287) sample_accus[1] =-sample_accus[1] ; // faster >  than &  ,strange ,this is reasonably quick
 
 				sample_accus[2] = sample_accus[2] + note_tuned[2];
 				//		if (!(note_channel[0]))   sample_accus[2] =0;  // turn off with vel now , maybe use mask
@@ -1764,23 +1766,29 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 						sample_accus[3] = sample_accus[3] + note_tuned[3]; // bouncing somewhere
 						//sample_accus[3] = sample_accus[3] +4000;
 						//	if (!(note_channel[0]))   sample_accus[3] =0;  // turn off with vel now , maybe use mask
-								if (sample_accus[3]>524287) sample_accus[3] =-sample_accus[3] ; // faster >  than &  ,strange
+								if (sample_accus[3]>524287) sample_accus[3] =-sample_accus[3] ; // 
 
 								sample_accus[4] = sample_accus[4] + note_tuned[4];
 									//	if (!(note_channel[4]))   sample_accus[4] =0;  // turn off with vel now , maybe use mask
-										if (sample_accus[4]>524287) sample_accus[4] =-sample_accus[4] ; // faster >  than &  ,strange
+										if (sample_accus[4]>524287) sample_accus[4] =-sample_accus[4] ; // 
 
 										sample_Accu[2] = 0;sample_Accu[0] =0;sample_Accu[3] =0; //all zeroed
 										//if (sample_accus[2]<0) sample_Accu[2]=+sample_accus[2]; else sample_Accu[2]=sample_accus[2]; // convert to triangle ?
 										sample_Accu[0]=sample_accus[2]>>7; // needs cut a bit
 							
+						
+								
+								//sample_Accu[3]=(temp_11+temp_12)/2; //test addition , 11 steps with array or 15 with adding temp variables , array faster in this case
+								
+								//sample_Accu[3]=__SHADD16(sample_accus[2],sample_accus[4]); //similar thing but with simd shadd is 8 but needs loads 
+								
 								sample_Accu[0] = ((sine_out+sample_Accu[0])*cross_fade[1]);
 								
 										
 										
 										
 										
-									 // sample section with float
+									 // sample section with float ,fairly quick 
 										float s_temp; // hold float out 0-512 different speeds , i is ref pos
 										float s_temp2;
 										float freq_jump= freq_lookup+sample_build[0];  //add to accu pointer
@@ -1830,18 +1838,22 @@ int32_t feedback_out=filter_out[3];
 sample_Accu[1]=sample_Accu[0];
 
 
-		if (freq_point[0]>1) freq_point[0]=1; else if (freq_point[0]<0) freq_point[0]=0;// just in case
+		//if (freq_point[0]>1) freq_point[0]=1; else if (freq_point[0]<0) freq_point[0]=0;// this is stupid long in asm
+		
 		//freq_point[0]=0.50;
-		freq_point[1]=1-freq_point[0];
+		
 		//freq_point[1]=(1-freq_point[0])*0.7;
 		//filter_accus[1]=sample_Accu[1]-(filter_accus[5]*0.3);
 		//filter_accus[1]=sample_Accu[1];
+		float pole_1 = freq_point[0]; //using this is faster than array ref (11 instead of 13) 
+		float pole_2 = 1-pole_1; // faster when reusing the same variable
+		
 		filter_accus[1]=sample_Accu[1]+((filter_hold[0])*0.5);
 		filter_accus[1]= filter_accus[1]*adsr_level[3]; // add adsr envelope
-		filter_accus[2]=(filter_accus[1]*freq_point[0])+(filter_accus[2]*freq_point[1]);
-		filter_accus[3]=(filter_accus[2]*freq_point[0])+(filter_accus[3]*freq_point[1]);
-		filter_accus[4]=(filter_accus[3]*freq_point[0])+(filter_accus[4]*freq_point[1]);
-		filter_accus[5]=(filter_accus[4]*freq_point[0])+(filter_accus[5]*freq_point[1]);
+		filter_accus[2]=(filter_accus[1]*pole_1)+(pole_2*filter_accus[2]);
+		filter_accus[3]=(filter_accus[2]* pole_1)+(filter_accus[3]*pole_2);
+		filter_accus[4]=(filter_accus[3]* pole_1)+(filter_accus[4]*pole_2);
+		filter_accus[5]=(filter_accus[4]* pole_1)+(filter_accus[5]*pole_2);
 		filter_hold[0]=(filter_accus[5]+filter_accus[11])*0.5; //half sample , nice
 		sample_Accu[0] =filter_accus[5]; // out
 		filter_accus[11]=filter_accus[5]; //write back new value
@@ -1851,21 +1863,24 @@ sample_Accu[1]=sample_Accu[0];
 		sample_Accu[3]=(sample_Accu[2]>>4); // this one is louder than sine
 
 
-				if (freq_point[2]>1) freq_point[2]=1;
+		//if (freq_point[2]>1) freq_point[2]=1;  // this is still 9 
 
-				freq_point[3]=1-freq_point[2];
-				filter_accus[6]=sample_Accu[3];
-					filter_accus[6]= filter_accus[6]*adsr_level[3]; // add adsr envelope
+		
+		pole_1 = freq_point[2]; //using this is faster than array ref (11 instead of 13) 
+		 pole_2 = 1-pole_1;
+		
+		filter_accus[6]=sample_Accu[3];
+		filter_accus[6]= filter_accus[6]*adsr_level[3]; // add adsr envelope
+
+		filter_accus[7]=(filter_accus[6]* pole_1)+(filter_accus[7]*pole_2);
+		filter_accus[8]=(filter_accus[7]* pole_1)+(filter_accus[8]*pole_2);
+		filter_accus[9]=(filter_accus[8]* pole_1)+(filter_accus[9]*pole_2);
+		filter_accus[10]=(filter_accus[9]* pole_1)+(filter_accus[10]*pole_2);
+		filter_hold[1]=(filter_accus[10]+filter_accus[12])*0.5; //half sample
+		sample_Accu[2] =filter_accus[10]; //out
+		filter_accus[12]=filter_accus[10]; //write back new value
 				
-				filter_accus[7]=(filter_accus[6]*freq_point[2])+(filter_accus[7]*freq_point[3]);
-				filter_accus[8]=(filter_accus[7]*freq_point[2])+(filter_accus[8]*freq_point[3]);
-				filter_accus[9]=(filter_accus[8]*freq_point[2])+(filter_accus[9]*freq_point[3]);
-				filter_accus[10]=(filter_accus[9]*freq_point[2])+(filter_accus[10]*freq_point[3]);
-				filter_hold[1]=(filter_accus[10]+filter_accus[12])*0.5; //half sample
-				sample_Accu[2] =filter_accus[10]; //out
-				filter_accus[12]=filter_accus[10]; //write back new value
-				
-				////////////////////////////// delay section, very heavy esp w float  /////////////////////////
+				////////////////////////////// delay section, very heavy esp w float,106 lines  /////////////////////////
 				//s_temp=sample_Accu[2]>>8; // shift to 16 bit
 				
 				int32_t delayin_accu=sample_Accu[2]>>8;  // input
@@ -1878,10 +1893,10 @@ sample_Accu[1]=sample_Accu[0];
 				int16_t delay_old=play_delay[delay_tpointer];
 			
 				
-									delayset_accu=(delay_old*10)+(delayin_accu*6); // feedback only using delayed audio
-									play_delay[delay_point]=delayset_accu>>4; // copy back
-									delay_accu[0]=delay_old; //delay only output 
-									delay_accu[1]=((delay_accu[0]<<1)+(delay_accu[1]*6))>>3;//with low pass(undersampled)
+				delayset_accu=(delay_old*10)+(delayin_accu*6); // feedback only using delayed audio
+				play_delay[delay_point]=delayset_accu>>4; // copy back
+				delay_accu[0]=delay_old; //delay only output
+				delay_accu[1]=((delay_accu[0]<<1)+(delay_accu[1]*6))>>3;//with low pass(undersampled) ,might try else 
 				}
 									// below only needed to run always
 									
@@ -1892,20 +1907,32 @@ sample_Accu[1]=sample_Accu[0];
 
 /////////////////////////delay end////////////////////////////
 
-filter_Accu=0;
-filter_Accu=(sample_Accu[0]+sample_Accu[2])>>8; //filter + drum out
+									filter_Accu=0;
+									//int32_t multi_ply= (2<<16)+2;
+									//sample_Accu[0]=0; 
+									//sample_Accu[2]=sample_Accu[2]>>10;
+									//sample_Accu[2]=sample_Accu[2]+(filter_Accu<<16); //add old and new value shifted
+									filter_Accu=(sample_Accu[0]+sample_Accu[2])>>8; //filter + drum out
+									 
+										//filter_Accu=__SMLAD(sample_Accu[2],multi_ply,0) ;  // try signed 2x 16bit + 2x16 +31accu   (filter)
+									//filter_Accu=((filter_Accu<<16)>>16) + (filter_Accu>>16); // 16 bit end
+								
+									
+									//filter_Accu=filter_Accu; // cant use
+									
+									
+									
+									if (one_shot!=199)   one_shot++;  //play one attack then stop
 
+									//if (filter_Accu>0xFFFF) filter_Accu=0xFFFF; else if (filter_Accu<-65535) filter_Accu=-65535;  // limiter to 16 bits
 
- if (one_shot!=199)   one_shot++;  //play one attack then stop
+									filter_Accu=__SSAT(filter_Accu,16);  //signed saturate to n bit ,works exactly as expected ,flat tops on both sides(shorter than ifs)
 
- if (filter_Accu>0xFFFF) filter_Accu=0xFFFF; else if (filter_Accu<-65535) filter_Accu=-65535;  // limiter to 16 bits
-
-
- play_sample[i_total]=(filter_Accu>>6)+1023;   // final output disable for now
-	//play_sample[i_total]=(sample_Accu[4])+1023;
+									play_sample[i_total]=(filter_Accu>>6)+1023;   // final output disable for now
+									//play_sample[i_total]=(sample_Accu[4])+1023;
 
 }
- //make sure it's finished
+//make sure it's finished
 bank_write=0;
 }
 
