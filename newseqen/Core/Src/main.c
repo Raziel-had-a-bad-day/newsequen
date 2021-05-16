@@ -18,12 +18,17 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#define ARM_MATH_CM4
+#include "main.h"
 #include "main.h"
 #include "arm_math.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+// dont forget to include arm_math files inc dsp and the defines #define ARM_MATH_CM4
+//#include "main.h"
+//#include "arm_math.h"
+// swo is at PA3
+// sample calc loop length is 8-10ms atm  this+else cannot be more than 16 or will loop old data
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -189,7 +194,7 @@ uint8_t potSource[256]; // high res version of potValues used when needed 40-0, 
 uint8_t notePos2;
 //static unsigned short lfoNext;
 
-uint8_t noteTiming;  // set timing shift
+
 static unsigned short noteTimeFlag;
 uint8_t noteTimebit[]= {0,170,85,240,15,204,51,153,102,165,90,0}   ;   // bit switch for adjustimg rythm
 uint16_t noteAccu; //adder for left over timing
@@ -345,6 +350,8 @@ void adsr(void);
 void display_gfx(void);
 void SPI_command(void);
 void display_update(void);
+
+
 
 //void velocityLFO(void);
 uint8_t seq_pos; // sequencer position linked to isrCount for now but maybe change
@@ -633,6 +640,10 @@ float sample_build[11]; // float based sample accu for interpolation
 uint8_t popup_ref2; // store text pointer for feedback
 int32_t delay_accu[10]; //keep stuff for delay
 
+int32_t temp_samplehold[1026]; // keep clean audio out here , much better fixed then temp created
+uint8_t note_sequence[257]; // hold notes for 0-7 poly
+
+uint32_t sys_count; // use it for measuring time
 uint8_t gfx_mod; // jump enc line for faster update , just flag
 uint16_t gfx_counter[6]={0,0,0,0,0}; // just upcounter for gfx ram bytes
 uint8_t gfx_skip=1;  // important
@@ -685,7 +696,7 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
-  const volatile uint8_t *userConfig=(const volatile uint8_t *)0x0800D2F0;
+
 
 
 
@@ -757,7 +768,7 @@ tempo_lut[i]=tempo_hold;
 }
 isrMask=571; // def tempo 571=180bpm , 20 ms /isrcount
 
-noteTiming=24;
+
 
 
 for (i=1;i<51;i++) {   //midi note lookup freq table/float 0-c2(65.hz)   , careful
@@ -884,13 +895,12 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 100;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 12;
+  RCC_OscInitStruct.PLL.PLLN = 96;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -1236,6 +1246,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
@@ -1277,11 +1288,15 @@ uint8_t spi_store[5];
 	spi_enable=1; }
 }
 
+
+
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)    // unreliable
 
 {
 
 	sample_point=sample_point & 1023;// this is 1
+	if (!(sample_point&3)) sys_count++; //add one very 0.14ms or 1/8 ish
 	play_hold=play_sample[sample_point]; // this is 2
 
 		if(TIM3==htim->Instance)			// nothing here is consistent
@@ -1585,10 +1600,10 @@ void sampling(void){						// 18 ms of data
 
 
 uint8_t t_ac;
-
+sys_count=0; //reset counter for measuring loop time
 uint8_t mask_i;
-uint8_t mask_k;
-uint8_t adsr_mult[5];
+
+
 //adc_read();
 //uint16_t isr_tempo=isrMask; // get tempo value
 sample_pointB=sample_pointD;
@@ -1603,7 +1618,8 @@ float freq2_temp;
 float freq_adder;
 float tempo_sync=16384/((tempo_mod*16)/512) ; // 8000 at slowest 15.625 updates to lfo at 1 note 16384/15.625=1048.576+ per update  at setting 80 
 tempo_sync=tempo_sync/80;
-
+	//printf("%d",note_channel[3]);
+//HAL_GetTick();
 
 for (l=0;l<10;l++){
 	
@@ -1634,25 +1650,13 @@ lfo_out[l]=freq_temp+8195; // all ok
 freq_point[2]=lfo_out[3]*0.00006435;;
 	//potSource[150]=(freq_point[0])*100; //0-2
 
-//float lcd_out2;
-
-
-
-//lcd_out3=potSource[130]; // 3 digit read out , works ok
-//lcd_out3=lcd_out3+180;
-potSource[150]=(lcd_out3/100)*16;
-potSource[151]=((lcd_out3 %100)/10)*16;		 // 0-160 to 0-10
-potSource[152]=(lcd_out3%10)*16;
-
-
-unsigned short  sine_zero;  // zero cross
 note_holdA=0;
 
 int32_t filter_Accu;
 
 //tempo_mod=tempo_mod-63+(lfo_out[1]>>7);
 //if (tempo_mod<450) tempo_mod=((tempo_mod-200)>>1) +200; // more res lower
-uint8_t note_plain;
+
 int8_t ring_mod=0;
 //sample_Accu2=0;
 //printf ("crap");
@@ -1665,13 +1669,13 @@ if(adc_values[2]&16)	{cross_fade[1]=127-fader[adc_values[2]&15]; cross_fade[2]=1
 
 ///////////////////////////////////////////////////////////////
 
-for (i=0;i<512;i++) {    // this should write 512 bytes , or about 15ms buffer ,works fine
+for (i=0;i<512;i++) {    // this should write 512 bytes , doing only notes now
 
-	i_total=i+sample_pointB;
+	
 
-	note_plain=potValues[seq_pos & 7 ];
+	//note_plain=potValues[seq_pos & 7 ];
 potValues[i&255]=potSource[i&255]>>4; //just to update values 
-	if (tempo_count>=tempo_mod) { next_isr=(next_isr+1) & 4095;tempo_count=0;adsr();  }  else {tempo_count++; }  //trigger next note , actual next step for isrCount(future)  8ms,trying to fix slow down here  8000 too  much, adsr clears note info
+	if (tempo_count>=tempo_mod) { next_isr=(next_isr+1) & 4095;tempo_count=0;  }  else {tempo_count++; }  //trigger next note , actual next step for isrCount(future)  8ms,trying to fix slow down here  8000 too  much, adsr clears note info
 // tempo_count is about 1000-400 
 	tempo_start=0;
 	if ((next_isr>>4) != seq_pos) { 					// next note step 140ms
@@ -1712,19 +1716,21 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 
 
 
-	note_channel[5]=potValues[80+(seq_pos&15)];  // sample
+	//note_channel[5]=potValues[80+(seq_pos&15)];  // sample
 
 
-	if ((note_channel[5]) && (adsr_toggle[5]==2)) {note_holdB=note_channel[5]; one_shot=0;}  // grab note when on ,one shot also
+	//if ((note_channel[5]) && (adsr_toggle[5]==2)) {note_holdB=note_channel[5]; one_shot=0;}  // grab note when on ,one shot also
 
 	
-	note_holdB=potValues[80+seq_loop[2]]+(potValues[74]);  // 
+	note_holdB=potValues[80+seq_loop[2]]+(potValues[74]/4);  // 
 	
 	note_holdB=(note_holdB-4)+(lfo_out[2]>>11);
-	note_holdB=MajorNote[note_holdB];
+	
+	note_channel[5]=note_holdB;
+	if (note_channel[5]>48) note_channel[5]=48; //limit
+	//note_holdB=MajorNote[note_holdB];
 
-	sine_adder=sine_lut[note_holdB];	//sets freq ,1.0594  * 16536 =17518  ,
-	sine_adder= (sine_adder*1200)>>10;  // modify different sample size , just need single cycle length and thats it
+
 		mask_result =0;
 
 
@@ -1736,24 +1742,36 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 		sample_Accu[5]=0; // reset to 0 mani sample hold
 	//sample_Accu[]={0,0,0,0,0};
 	
-	for (mask_i=0;mask_i<5;mask_i++)	{							// calc detune , slow ,also creates notes
+	for (mask_i=0;mask_i<8;mask_i++)	{							// calc detune , slow ,also creates notes
 
-		if (note_channel[mask_i]) {tune_Accu=sample_Noteadd[MajorNote[note_channel[mask_i]]];   note_tuned[mask_i]=(tune_Accu);}
-		
+		//if (note_channel[mask_i]) {tune_Accu=sample_Noteadd[MajorNote[note_channel[mask_i]]];   note_tuned[mask_i]=(tune_Accu);}
+		if (note_channel[mask_i]) note_sequence[mask_i+(i>>4)]=MajorNote[note_channel[mask_i]]; //record  32 notes for 8 channels (way more then needed) splitting up calcs 
 	}
 
  
 	}
 
+} //end of note create , usually will be a single note only since 300*16 /steps per note at fastest
+
+
+for (i=0;i<512;i++) { 		//only audio calcs here now
+
+if (!i) adsr(); //run once will have to change for more accurate but good enough
+
+for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse 
+		note_tuned[mask_i]=note_sequence[mask_i+(i>>4)]; // create whole 32 notes for 8 channels, splitting up calcs 
+	}
+
+	sine_adder=sine_lut[note_tuned[5]+27];	//sets freq ,1.0594  * 16536 =17518  ,
+	sine_adder= (sine_adder*1200)>>10;  // modify different sample size , just need single cycle length and thats it
   // calc freq 1/isr or 1/16 per note ,need for pitch bend and so on , change depending on decay
-
+/*
 	// every step   1,110,928   >>20  ,per note
-// New oscillators , sync, trigger input , waveshape ,zero cross
+// New oscillators , sync, trigger input , waveshape ,zero cross , about 1ms plety quick
 		sample_accus[0] = sample_accus[0] + note_tuned[0]; //careful with signed bit shift,better compare
-
+		
+		
 		if (sample_accus[0]>524287) sample_accus[0] =-sample_accus[0] ; // faster >  than &  ,strange
-
-
 
 		sample_accus[1] = sample_accus[1] + note_tuned[1];  // normal adder full volume
 			//	if (!(note_channel[0]))   sample_accus[1] =0;  // turn off with vel now , maybe use mask
@@ -1782,13 +1800,13 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 								
 								//sample_Accu[3]=__SHADD16(sample_accus[2],sample_accus[4]); //similar thing but with simd shadd is 8 but needs loads 
 								
-								sample_Accu[0] = ((sine_out+sample_Accu[0])*cross_fade[1]);
 								
+								
+		*/								
 										
 										
 										
-										
-									 // sample section with float ,fairly quick 
+									 // sample section with float ,fairly quick  about 1ms ,goes to sample accu[2]
 										float s_temp; // hold float out 0-512 different speeds , i is ref pos
 										float s_temp2;
 										float freq_jump= freq_lookup+sample_build[0];  //add to accu pointer
@@ -1803,39 +1821,35 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 										int16_t s_bit2=sine_block2[(freq_jump2+1)&511]-20000; //next sample
 									
 									s_temp= s_bit1+ (s_frac* (s_bit2-s_bit1));  // y1-y0 , good
-										
-										
-										
 										sample_accus[3]= s_temp;
-									//play_delay[delay_point]=sample_accus[3];
-									//play_delay[delay_point]=(sample_accus[3]+play_delay[delay_point]+play_delay[(delay_point+500)&1023])/2; 
-									//play_delay[delay_point]=((sample_accus[3])+play_delay[delay_point])/2;  // write current to mem
-									//play_delay[delay_point]=(sample_accus[3]+(play_delay[(delay_point)+1023]&1023))/2; 
 										
-										//sample_Accu[3]=0;
-										sample_Accu[3]=sample_accus[3]<<6; // push up
+										
+										
+										sample_Accu[3]=sample_accus[3]; // push up
 										sample_Accu[2] = (sample_Accu[3]*cross_fade[2]);			//27b, 2 out f2  might do a crossfade here using pot 3
-
-										//	sample_Accu[5] = sample_Accu[4]+ (sample_accus[4]*4);			// drum and envelope
-
-		//	sample_Accu=sample_Accu-(1<<21);
-
 
 	if (sine_counterB==0) 	sine_temp2=sine_adder;
 
 		sine_counterB=sine_counterB+sine_temp2 ;  // sine up counter per cycle , however sine adder nees to wait
-		if (sine_counterB>>7) sine_zero=0; else sine_zero=1;
+		//if (sine_counterB>>7) sine_zero=0; else sine_zero=1;
 
 if (sine_counterB>(sine_length<<5)) sine_counterB=0; //fixed for now
-	sine_count(); // calc sine
+	sine_count(); // calc sine about 1.4ms
+//sample_Accu[0] = ((sine_out+sample_Accu[0])*cross_fade[1]);
+sample_Accu[0] = sine_out*cross_fade[1];
 
-// filter 1
+	temp_samplehold[i<<1]=sample_Accu[0]; // write  to temp bank
+	temp_samplehold[(i<<1)+1]=sample_Accu[2]; 
+	
+	
 
+} //end of clean wave out
 
-int32_t feedback_out=filter_out[3];
-//if (feedback_out>0xFFFF) feedback_out=0xFFFF; else if (feedback_out<-65535) feedback_out=-65535;  // limiter to 16 bits
+for (i=0;i<512;i++) { 		//add fx and final output
 
-sample_Accu[1]=sample_Accu[0];
+i_total=i+sample_pointB; // sample counter for output 0-511 or 512-1023
+
+// filters add was 4ms now its about 2ms
 
 
 		//if (freq_point[0]>1) freq_point[0]=1; else if (freq_point[0]<0) freq_point[0]=0;// this is stupid long in asm
@@ -1847,24 +1861,68 @@ sample_Accu[1]=sample_Accu[0];
 		//filter_accus[1]=sample_Accu[1];
 		float pole_1 = freq_point[0]; //using this is faster than array ref (11 instead of 13) 
 		float pole_2 = 1-pole_1; // faster when reusing the same variable
+		float accu_0;
+		float accu_1=filter_accus[1];  //try something else 
+				float accu_2=filter_accus[2];
+					float accu_3=filter_accus[3];
+							float accu_4=filter_accus[4];
+
+sample_Accu[1]=temp_samplehold[i<<1]; 
+
+//filter_accus[1]=sample_Accu[1]+((filter_hold[0])*0.5);// disable for now
+		accu_0= sample_Accu[1]*adsr_level[3];
 		
-		filter_accus[1]=sample_Accu[1]+((filter_hold[0])*0.5);
-		filter_accus[1]= filter_accus[1]*adsr_level[3]; // add adsr envelope
+		accu_1=(accu_0*pole_1)+(pole_2*accu_1);  // slightly faster
+		accu_2=(accu_2*pole_1)+(pole_1*accu_2);
+		accu_3=(accu_2*pole_1)+(pole_2*accu_3);
+		accu_4=(accu_3*pole_1)+(pole_1*accu_4);
+		sample_Accu[0] =accu_1; 
+		
+		filter_accus[1]=accu_1;  //try something else 
+				filter_accus[2]=accu_2;
+					filter_accus[3]=accu_3;
+					filter_accus[4]=accu_4;
+		
+		
+		
+		/*
+		
+		
+		//F2
+		pole_1 = freq_point[2]; //using this is faster than array ref (11 instead of 13) 
+		 pole_2 = 1-pole_1;
+		accu_2=0;
+		
+		accu_1= sample_Accu[3]*adsr_level[3];
+		
+		accu_2=(accu_1*pole_1)+(pole_2*accu_2);  // slightly faster
+		accu_1=(accu_2*pole_1)+(pole_1*accu_2);
+		accu_2=(accu_1*pole_1)+(pole_2*accu_2);
+		accu_1=(accu_2*pole_1)+(pole_1*accu_2);
+		sample_Accu[2] =accu_1;
+		
+		
+	
+		filter_accus[1]= sample_Accu[1]*adsr_level[3]; // add adsr envelope ,disable for now stick to simple filters for now
+		
 		filter_accus[2]=(filter_accus[1]*pole_1)+(pole_2*filter_accus[2]);
 		filter_accus[3]=(filter_accus[2]* pole_1)+(filter_accus[3]*pole_2);
 		filter_accus[4]=(filter_accus[3]* pole_1)+(filter_accus[4]*pole_2);
 		filter_accus[5]=(filter_accus[4]* pole_1)+(filter_accus[5]*pole_2);
-		filter_hold[0]=(filter_accus[5]+filter_accus[11])*0.5; //half sample , nice
+		//filter_hold[0]=(filter_accus[5]+filter_accus[11])*0.5; //half sample , nice
 		sample_Accu[0] =filter_accus[5]; // out
-		filter_accus[11]=filter_accus[5]; //write back new value
+		//filter_accus[11]=filter_accus[5]; //write back new value
 		//sample_Accu[0] =sample_Accu[1];
 
 		//filter 2
-		sample_Accu[3]=(sample_Accu[2]>>4); // this one is louder than sine
+		*/
+		
+		
+		//sample_Accu[3]=(sample_Accu[2]>>4); // this one is louder than sine
 
 
 		//if (freq_point[2]>1) freq_point[2]=1;  // this is still 9 
-
+sample_Accu[3]=temp_samplehold[(i<<1)+1]; 
 		
 		pole_1 = freq_point[2]; //using this is faster than array ref (11 instead of 13) 
 		 pole_2 = 1-pole_1;
@@ -1876,19 +1934,20 @@ sample_Accu[1]=sample_Accu[0];
 		filter_accus[8]=(filter_accus[7]* pole_1)+(filter_accus[8]*pole_2);
 		filter_accus[9]=(filter_accus[8]* pole_1)+(filter_accus[9]*pole_2);
 		filter_accus[10]=(filter_accus[9]* pole_1)+(filter_accus[10]*pole_2);
-		filter_hold[1]=(filter_accus[10]+filter_accus[12])*0.5; //half sample
+		//filter_hold[1]=(filter_accus[10]+filter_accus[12])*0.5; //half sample
 		sample_Accu[2] =filter_accus[10]; //out
-		filter_accus[12]=filter_accus[10]; //write back new value
+		//filter_accus[12]=filter_accus[10]; //write back new value
+
 				
-				////////////////////////////// delay section, very heavy esp w float,106 lines  /////////////////////////
+				////////////////////////////// delay section, very heavy esp w float,106 lines , now its ok about 0.7ms  /////////////////////////
 				//s_temp=sample_Accu[2]>>8; // shift to 16 bit
 				
-				int32_t delayin_accu=sample_Accu[2]>>8;  // input
+				int32_t delayin_accu=sample_Accu[2]>>6;  // input
 				
 				if ((i&3)==1) { delay_point=(delay_point+1)&2047; //advance every 4  step slower isnt any better just longer delay
 				uint16_t delay_tpointer=(delay_point+1)&2047;  // stores location for delay lenght / 1 is max delay
 										
-				int32_t delayout_accu;						
+
 				int32_t delayset_accu;						
 				int16_t delay_old=play_delay[delay_tpointer];
 			
@@ -1907,34 +1966,37 @@ sample_Accu[1]=sample_Accu[0];
 
 /////////////////////////delay end////////////////////////////
 
-									filter_Accu=0;
-									//int32_t multi_ply= (2<<16)+2;
-									//sample_Accu[0]=0; 
-									//sample_Accu[2]=sample_Accu[2]>>10;
-									//sample_Accu[2]=sample_Accu[2]+(filter_Accu<<16); //add old and new value shifted
+								filter_Accu=0;
+								
 									filter_Accu=(sample_Accu[0]+sample_Accu[2])>>8; //filter + drum out
 									 
 										//filter_Accu=__SMLAD(sample_Accu[2],multi_ply,0) ;  // try signed 2x 16bit + 2x16 +31accu   (filter)
 									//filter_Accu=((filter_Accu<<16)>>16) + (filter_Accu>>16); // 16 bit end
 								
-									
-									//filter_Accu=filter_Accu; // cant use
-									
-									
-									
 									if (one_shot!=199)   one_shot++;  //play one attack then stop
-
-									//if (filter_Accu>0xFFFF) filter_Accu=0xFFFF; else if (filter_Accu<-65535) filter_Accu=-65535;  // limiter to 16 bits
 
 									filter_Accu=__SSAT(filter_Accu,16);  //signed saturate to n bit ,works exactly as expected ,flat tops on both sides(shorter than ifs)
 
 									play_sample[i_total]=(filter_Accu>>6)+1023;   // final output disable for now
 									//play_sample[i_total]=(sample_Accu[4])+1023;
 
-}
+} //end of fx and out
+
+
 //make sure it's finished
 bank_write=0;
-}
+
+//feedback info
+lcd_out3=sys_count&511; //read ticker  140uS 
+potSource[150]=(lcd_out3/100)*16;
+potSource[151]=((lcd_out3 %100)/10)*16;		 // 0-160 to 0-10
+potSource[152]=(lcd_out3%10)*16;
+sys_count=0;
+
+
+
+
+} // end of sampling
 
 
 
@@ -1947,7 +2009,7 @@ void lfo(void){ // save this for another page
 	uint8_t lfo_offset[5]; // different shapes , triangle for now
 	uint8_t lfo_target[5]; // potSource target , various options with limits, maybe some feedback
 	//uint16_t lfo_value[5]; // actual lfo value out
-	uint8_t lfo_table[7]={0,0,0,0,0,0}; // lookup table for target
+
 	//uint16_t lfo_output[5];
 
 for (n_count=0;n_count<5;n_count++){			//grab variables from potSource , dont use i
@@ -2122,7 +2184,7 @@ sine_frac=sine_counterB & 31;  // grab last 5 bits, actual position for linear i
 
 void print_pot(void){
 
-	uint8_t n_t;
+
 /*
 	printf("%d",bsr_out);
 printf(",");
