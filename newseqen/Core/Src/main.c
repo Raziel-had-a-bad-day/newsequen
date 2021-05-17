@@ -405,7 +405,7 @@ const uint16_t sine_block5[601]={ 20037, 20533, 20996, 21339, 21610, 21874, 2216
 uint16_t sine_length=600; //holds sample size
 
 uint16_t	sine_lut[]= { 33,33, 36, 38, 41, 43, 46, 48, 51, 54, 57, 61, 65, 68, 72, 77, 81, 86, 91, 97, 102, 108, 115, 122, 129, 137, 145, 153, 163, 172, 182, 193, 205, 217, 230, 244,
-		258, 273, 290, 307, 325, 344, 365, 387, 410, 434, 460, 487, 516};  // sine + step *32   ,current
+258, 273, 290, 307, 325, 344, 365, 387, 410, 434, 460, 487, 516};  // sine + step *32   ,current
 uint16_t sine_adder; // sine_lut return
   // sine lookup  ,  multiplier for midi >>14
 
@@ -1713,20 +1713,11 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 	if (note_channel[3])  freq_lookup=512/(36137/midi_lut[MajorNote[note_channel[3]]]); // sample playback rate =samples/(36137/note hz)
 	
 	
-
-
-
-	//note_channel[5]=potValues[80+(seq_pos&15)];  // sample
-
-
-	//if ((note_channel[5]) && (adsr_toggle[5]==2)) {note_holdB=note_channel[5]; one_shot=0;}  // grab note when on ,one shot also
-
-	
-	note_holdB=potValues[80+seq_loop[2]]+(potValues[74]/4);  // 
+	note_holdB=potValues[80+seq_loop[2]]+(potValues[74]);  //  first seq line
 	
 	note_holdB=(note_holdB-4)+(lfo_out[2]>>11);
 	
-	note_channel[5]=note_holdB;
+	if (note_holdB)   note_channel[5]=note_holdB;  // only note on 
 	if (note_channel[5]>48) note_channel[5]=48; //limit
 	//note_holdB=MajorNote[note_holdB];
 
@@ -1745,7 +1736,7 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 	for (mask_i=0;mask_i<8;mask_i++)	{							// calc detune , slow ,also creates notes
 
 		//if (note_channel[mask_i]) {tune_Accu=sample_Noteadd[MajorNote[note_channel[mask_i]]];   note_tuned[mask_i]=(tune_Accu);}
-		if (note_channel[mask_i]) note_sequence[mask_i+(i>>4)]=MajorNote[note_channel[mask_i]]; //record  32 notes for 8 channels (way more then needed) splitting up calcs 
+		if (note_channel[mask_i]) note_sequence[mask_i]=MajorNote[note_channel[mask_i]]; //record  32 notes for 8 channels (way more then needed) splitting up calcs 
 	}
 
  
@@ -1756,15 +1747,22 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 
 for (i=0;i<512;i++) { 		//only audio calcs here now
 
-if (!i) adsr(); //run once will have to change for more accurate but good enough
+if (!i) {		//run once will have to change for more accurate but good enough ,keep it like that 
+adsr(); 
 
 for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse 
-		note_tuned[mask_i]=note_sequence[mask_i+(i>>4)]; // create whole 32 notes for 8 channels, splitting up calcs 
+		note_tuned[mask_i]=note_sequence[mask_i]; // 0-7 notes
 	}
 
-	sine_adder=sine_lut[note_tuned[5]+27];	//sets freq ,1.0594  * 16536 =17518  ,
+ sine_adder=sine_lut[note_tuned[5]];	//sets freq ,1.0594  * 16536 =17518  , not getting any info on note channel?
 	sine_adder= (sine_adder*1200)>>10;  // modify different sample size , just need single cycle length and thats it
-  // calc freq 1/isr or 1/16 per note ,need for pitch bend and so on , change depending on decay
+ 
+
+}
+
+
+
+ // calc freq 1/isr or 1/16 per note ,need for pitch bend and so on , change depending on decay
 /*
 	// every step   1,110,928   >>20  ,per note
 // New oscillators , sync, trigger input , waveshape ,zero cross , about 1ms plety quick
@@ -1809,7 +1807,7 @@ for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse
 									 // sample section with float ,fairly quick  about 1ms ,goes to sample accu[2]
 										float s_temp; // hold float out 0-512 different speeds , i is ref pos
 										float s_temp2;
-										float freq_jump= freq_lookup+sample_build[0];  //add to accu pointer
+										float freq_jump= freq_lookup+sample_build[0];  //add to accu pointer ,freq lookup=note_channel[3 ]
 										sample_build[0]=freq_jump;  //store
 										
 										uint32_t freq_jump2=freq_jump; // int value 
@@ -1823,19 +1821,17 @@ for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse
 									s_temp= s_bit1+ (s_frac* (s_bit2-s_bit1));  // y1-y0 , good
 										sample_accus[3]= s_temp;
 										
-										
-										
 										sample_Accu[3]=sample_accus[3]; // push up
 										sample_Accu[2] = (sample_Accu[3]*cross_fade[2]);			//27b, 2 out f2  might do a crossfade here using pot 3
 
-	if (sine_counterB==0) 	sine_temp2=sine_adder;
+	if (sine_counterB==0) 	sine_temp2=sine_adder; //change on zero cross
 
 		sine_counterB=sine_counterB+sine_temp2 ;  // sine up counter per cycle , however sine adder nees to wait
 		//if (sine_counterB>>7) sine_zero=0; else sine_zero=1;
 
 if (sine_counterB>(sine_length<<5)) sine_counterB=0; //fixed for now
 	sine_count(); // calc sine about 1.4ms
-//sample_Accu[0] = ((sine_out+sample_Accu[0])*cross_fade[1]);
+
 sample_Accu[0] = sine_out*cross_fade[1];
 
 	temp_samplehold[i<<1]=sample_Accu[0]; // write  to temp bank
@@ -1849,96 +1845,45 @@ for (i=0;i<512;i++) { 		//add fx and final output
 
 i_total=i+sample_pointB; // sample counter for output 0-511 or 512-1023
 
-// filters add was 4ms now its about 2ms
+// filters add was 4ms now its about 1ms
 
 
-		//if (freq_point[0]>1) freq_point[0]=1; else if (freq_point[0]<0) freq_point[0]=0;// this is stupid long in asm
-		
-		//freq_point[0]=0.50;
-		
-		//freq_point[1]=(1-freq_point[0])*0.7;
-		//filter_accus[1]=sample_Accu[1]-(filter_accus[5]*0.3);
-		//filter_accus[1]=sample_Accu[1];
 		float pole_1 = freq_point[0]; //using this is faster than array ref (11 instead of 13) 
 		float pole_2 = 1-pole_1; // faster when reusing the same variable
 		float accu_0;
 		float accu_1=filter_accus[1];  //try something else 
-				float accu_2=filter_accus[2];
-					float accu_3=filter_accus[3];
-							float accu_4=filter_accus[4];
+		float accu_2=filter_accus[2];
+					
 
 sample_Accu[1]=temp_samplehold[i<<1]; 
 
 //filter_accus[1]=sample_Accu[1]+((filter_hold[0])*0.5);// disable for now
-		accu_0= sample_Accu[1]*adsr_level[3];
+		accu_0= sample_Accu[1]*adsr_level[3]; //ok
 		
-		accu_1=(accu_0*pole_1)+(pole_2*accu_1);  // slightly faster
-		accu_2=(accu_2*pole_1)+(pole_1*accu_2);
-		accu_3=(accu_2*pole_1)+(pole_2*accu_3);
-		accu_4=(accu_3*pole_1)+(pole_1*accu_4);
-		sample_Accu[0] =accu_1; 
+		accu_1=(accu_0*pole_1)+(pole_2*accu_1);  //  cut down to 12 db
+		accu_2=(accu_1*pole_1)+(pole_2*accu_2);
+		sample_Accu[0] =accu_2; 
+	
 		
 		filter_accus[1]=accu_1;  //try something else 
 				filter_accus[2]=accu_2;
-					filter_accus[3]=accu_3;
-					filter_accus[4]=accu_4;
 		
-		
-		
-		/*
-		
-		
-		//F2
-		pole_1 = freq_point[2]; //using this is faster than array ref (11 instead of 13) 
-		 pole_2 = 1-pole_1;
-		accu_2=0;
-		
-		accu_1= sample_Accu[3]*adsr_level[3];
-		
-		accu_2=(accu_1*pole_1)+(pole_2*accu_2);  // slightly faster
-		accu_1=(accu_2*pole_1)+(pole_1*accu_2);
-		accu_2=(accu_1*pole_1)+(pole_2*accu_2);
-		accu_1=(accu_2*pole_1)+(pole_1*accu_2);
-		sample_Accu[2] =accu_1;
-		
-		
-	
-		filter_accus[1]= sample_Accu[1]*adsr_level[3]; // add adsr envelope ,disable for now stick to simple filters for now
-		
-		filter_accus[2]=(filter_accus[1]*pole_1)+(pole_2*filter_accus[2]);
-		filter_accus[3]=(filter_accus[2]* pole_1)+(filter_accus[3]*pole_2);
-		filter_accus[4]=(filter_accus[3]* pole_1)+(filter_accus[4]*pole_2);
-		filter_accus[5]=(filter_accus[4]* pole_1)+(filter_accus[5]*pole_2);
-		//filter_hold[0]=(filter_accus[5]+filter_accus[11])*0.5; //half sample , nice
-		sample_Accu[0] =filter_accus[5]; // out
-		//filter_accus[11]=filter_accus[5]; //write back new value
-		//sample_Accu[0] =sample_Accu[1];
 
-		//filter 2
-		*/
-		
-		
-		//sample_Accu[3]=(sample_Accu[2]>>4); // this one is louder than sine
-
-
-		//if (freq_point[2]>1) freq_point[2]=1;  // this is still 9 
 sample_Accu[3]=temp_samplehold[(i<<1)+1]; 
 		
 		pole_1 = freq_point[2]; //using this is faster than array ref (11 instead of 13) 
 		 pole_2 = 1-pole_1;
+		float accu_3=filter_accus[3];
+		float accu_4=filter_accus[4];
 		
-		filter_accus[6]=sample_Accu[3];
-		filter_accus[6]= filter_accus[6]*adsr_level[3]; // add adsr envelope
+		accu_0= sample_Accu[3]*adsr_level[3];
+		accu_3=(accu_0*pole_1)+(pole_2*accu_3);  //  cut down to 12 db
+		accu_4=(accu_3*pole_1)+(pole_2*accu_4);
+			filter_accus[3]=accu_3;
+			filter_accus[4]=accu_4;
+		sample_Accu[2] =accu_4;
+		
 
-		filter_accus[7]=(filter_accus[6]* pole_1)+(filter_accus[7]*pole_2);
-		filter_accus[8]=(filter_accus[7]* pole_1)+(filter_accus[8]*pole_2);
-		filter_accus[9]=(filter_accus[8]* pole_1)+(filter_accus[9]*pole_2);
-		filter_accus[10]=(filter_accus[9]* pole_1)+(filter_accus[10]*pole_2);
-		//filter_hold[1]=(filter_accus[10]+filter_accus[12])*0.5; //half sample
-		sample_Accu[2] =filter_accus[10]; //out
-		//filter_accus[12]=filter_accus[10]; //write back new value
-
-				
 				////////////////////////////// delay section, very heavy esp w float,106 lines , now its ok about 0.7ms  /////////////////////////
 				//s_temp=sample_Accu[2]>>8; // shift to 16 bit
 				
@@ -2152,14 +2097,14 @@ sine_frac=sine_counterB & 31;  // grab last 5 bits, actual position for linear i
 
 	if (sine_counter>sine_length) sine_counter = sine_length;		// seems to be faster than using a for loop to calculate both values
 
-	sine_out = sine_block[sine_counter];  // 0- 40000
+	sine_out = sine_block3[sine_counter];  // 0- 40000
 	sine_tempA=sine_out; // grab first value , needs to be always plus
 	sine_tempA=sine_tempA-20000; //convert to signed
 
 	sine_counter++;
 	if (sine_counter>=sine_length)  sine_counter=0; // set to sample length
 
-			sine_out = sine_block[sine_counter];  // grab second value
+			sine_out = sine_block3[sine_counter];  // grab second value
 		
 		sine_tempB=sine_out; // grab first value
 			sine_tempB=sine_tempB-20000;  // convert to signed and +256 to -256
