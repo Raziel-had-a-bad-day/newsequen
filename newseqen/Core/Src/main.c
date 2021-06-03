@@ -52,6 +52,7 @@ DMA_HandleTypeDef hdma_adc1;
 I2C_HandleTypeDef hi2c2;
 
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi2_tx;
 
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
@@ -619,8 +620,8 @@ const char gfx_char[1024]={   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  0x00,  
 	      }; //various alphabet and other characters,for now 5*8 , 26*8 bytes+others , will update
 
 //uint8_t gfx_char[2048]={};
-uint16_t adsr_countup[11];  //holds isr count on notes , 
-	float adsr_level[11]; //float for vol envelope  ,ps 20 21
+
+float adsr_store[11];     
 float midi_lut[51]={65.4064,0}; //start with C2-c6
 float sample_build[11]; // float based sample accu for interpolation
 uint8_t popup_ref2; // store text pointer for feedback
@@ -634,11 +635,21 @@ uint8_t gfx_mod; // jump enc line for faster update , just flag
 uint16_t gfx_counter[6]={0,0,0,0,0}; // just upcounter for gfx ram bytes
 uint8_t gfx_skip=1;  // important
 uint8_t gfx_blink=0; // blinker counter
+uint8_t gfx_lcd[4]; //store for dma out on lcd , data store 
+
+
+uint16_t gfx_upcount=0; // upcounter for lcd mem
+uint8_t gfx_enable=0;
+volatile uint8_t spi_ticker=0;
+
 uint16_t lcd_out3; //for feedback
 uint16_t mod_source[10]; //all inputs list 10 for now lfo 1-5 pitch and AS 
 	uint16_t mod_target[16]; // all destination values  pV30-44 inp select 
 	uint8_t mod_gain[16]; // gain multiplier 0-1 or maybe some overload pV 45-60  gain multiplier
-
+uint16_t next_frame[6];  // i values 4* per  round 
+uint16_t adsr_set[258];  // 10*256 steps 
+uint16_t adsr_countup[258];  //holds isr count on notes , 
+float adsr_level[11]; //float for vol envelope  ,ps 20 21  , weird with floats if not zeroed 
 
 //  USE THE BREAK WITH SWITCH STATEMENT MORON!!!
 
@@ -811,34 +822,33 @@ firstbarLoop=0;
 
 	  }
 
-	  displayBuffer();
+	  displayBuffer();  // 1 char per loop 
 	  analoginputloopb(); // no delay
 	//  for (i=0;i<7;i++) {display_init();}
 	  if (init<6)
 {
 	  for (i=0;i<6;i++) {display_init();}  //1-2ms ?  change length if flickering ,maybe initial data
-} else display_update();
+  } else   gfx_enable=1;  // run separate
+
+if ((spi_ticker>2) && (gfx_enable==1)) {display_update(); spi_ticker=0;}  // wait then send needs 72uS to run 
+
+	
+	
+
 
 	  ///////////////////////////////////////////////////////////////////////////////
 
-	  if (loop_counter & 255)	{ // grab adc readings + 3ms , 32 step
+	  if ((loop_counter & 255)==255)	{ // grab adc readings + 3ms , 32 step
 	  	for (i=0;i<3;i++) {
 
 	  	adc_values[2-i]= (adc_source[i]>>7) &31;
 	  }
-	  	loop_counter=0;
+	  	
+		loop_counter=0;
 	  }
 
 	  if ((seq_pos==7) && (lcd_send==0)) {lcd_send=1;} // runs just once
-	  /*
-
-
-
-	   if (promValue<64) promValue=promValue+1 ; else promValue=0;  // fetch eeprom   nogo
-	  	  if ((promValues[promValue] ) !=(potValues[promValue]))  EEPROM.write(promValue,(potValues[promValue]));   //  not too happy can totally kill speed  will have to put elsewhere
-	  	  promValues[promValue] =potValues[promValue];
-	  	   */
-
+	
 	  	     HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin,(seq_pos & 1)); // easy skip ?
 	  	    // very inconsistent
 
@@ -1216,8 +1226,12 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
@@ -1270,12 +1284,12 @@ uint8_t spi_store[5];
 	spi_store[0]=spi_byte&255;
 	spi_store[1]=((spi_hold>>4)<<4)&255;
 	spi_store[2]=((spi_hold&15)<<4)&255;
-
+//HAL_Delay(1);
 // send this to spi for now
-		HAL_SPI_Transmit(&hspi2, (uint8_t *)spi_store, 3, 100);  // working good
+	//	HAL_SPI_Transmit(&hspi2, (uint8_t *)spi_store, 3, 100);  // working good
+HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)spi_store, 3);
 
 
-//HAL_Delay(10);
 	spi_enable=1; }
 }
 
@@ -1287,7 +1301,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)    // unreliable
 {
 
 	sample_point=sample_point & 1023;// this is 1
-	if (!(sample_point&3)) sys_count++; //add one very 0.14ms or 1/8 ish
+
+if (!(sample_point&3)) {sys_count++;  }//add one very 0.14ms or 1/8 ish
 	play_hold=play_sample[sample_point]; // this is 2
 
 		if(TIM3==htim->Instance)			// nothing here is consistent
@@ -1334,7 +1349,7 @@ TIM3->CCR3=play_hold ;  // keep readin sample storage
 	//	)  { bs_count=0; menu_store=(menuSelect>>2); } else bs_count++; // menu select, higher count just spills over  159 chamge to 128 2*64
 //}
 sample_point++; //this needs to be here or too fast and wrong sample rate
-
+spi_ticker++;
 }
 
 }
@@ -1469,37 +1484,37 @@ void display_gfx(void){   // new display driver , all gfx based
 
 }
 
-void display_update(void){				//spi display updater code , all gfx , works pretty ok
+void display_update(void){				//spi display updater code , all gfx , works pretty ok , needs 72uS between any instruction 
 
 	uint8_t spi_store[5];
 //uint8_t gfx_mod; // jump enc line for faster update
 
 switch (gfx_skip) { // 1-17  one line , might jump to only modified lines
 
-case 1 : {spi_hold=((gfx_counter[0])&31)+384;gfx_counter[4]=(gfx_counter[0]>>5);  gfx_counter[0]=(gfx_counter[0]+1)&63 ;break ;} // 0-63 lines 0-31 *2 
-case 2  : {	spi_hold=384+(gfx_counter[4]*8);break ;  } // after 32 lines it's +8 
+case 1 : {spi_hold=((gfx_counter[0])&31)+384;gfx_counter[4]=(gfx_counter[0]>>5);  gfx_counter[0]=(gfx_counter[0]+1)&63 ;break ;} // 0-63 lines 0-31 *2 ,command
+case 2  : {	spi_hold=384+(gfx_counter[4]*8);break ;  } // after 32 lines it's +8 , command
 
-default :  spi_hold=gfx_ram[gfx_counter[3]+(gfx_counter[2]<<4)] ;gfx_counter[3]=(gfx_counter[3]+1)&15; break; // problem starts on 1 
+default :  spi_hold=gfx_ram[gfx_counter[3]+(gfx_counter[2]<<4)] ;gfx_counter[3]=(gfx_counter[3]+1)&15; break; // problem starts on 1 ,data
 
 }
 gfx_skip++;
 
+//gfx_upcount=(gfx_skip-2)*3;  // write a single line 
+if (gfx_skip==19)  {gfx_counter[2]=(gfx_counter[2]+1) &63; gfx_counter[3]=0;gfx_skip=1;} //ok , next line ,jump to zero ,last byte
 
-if (gfx_skip==19)  {gfx_counter[2]=(gfx_counter[2]+1) &63; gfx_counter[3]=0;gfx_skip=1;} //ok
-		
-		
-		if (spi_hold>>8) spi_byte=248; else {spi_byte=250;}  //start with msb ,dont forget flip around at end, 250 =data ,248= command if below 8bit
+if (spi_hold>>8) spi_byte=248; else spi_byte=250;   	
+spi_byte=spi_byte&255;
 
-		spi_store[0]=spi_byte&255;
-		spi_store[1]=((spi_hold>>4)<<4)&255;
-		spi_store[2]=((spi_hold&15)<<4)&255;
+gfx_lcd[0]=spi_byte; //write to data mem
+	gfx_lcd[1]=((spi_hold>>4)<<4); // upper data
+gfx_lcd[2]=((spi_hold&15)<<4);  // lower data
 
-	// send this to spi for now
-			HAL_SPI_Transmit(&hspi2, (uint8_t *)spi_store, 3, 100);  // working good ,blocking
+HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)gfx_lcd, 3);
 
+
+//if (gfx_upcount==51) gfx_enable=2; //enable first write only 
 
 }
-
 
 
 void displayBuffer (void){        //  only 1 char per round for now ,works good
@@ -1609,6 +1624,9 @@ for (i=0;i<512;i++) {    // this should write 512 bytes , doing only notes now
 	//note_plain=potValues[seq_pos & 7 ];
 potValues[i&255]=potSource[i&255]>>4; //just to update values 
 	if (tempo_count>=tempo_mod) { next_isr=(next_isr+1) & 4095;tempo_count=0;nxt_hold=i+1;  }  else {tempo_count++; }  //trigger next note , next_isr runs about once only still
+
+
+
 // tempo_count is about 1000-400 
 	tempo_start=0;
 	if ((next_isr>>4) != seq_pos) { 					// next note step 140ms
@@ -1679,16 +1697,30 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 
 
 for (i=0;i<512;i++) { 		//only audio calcs here now
+//float freq_jump=sample_build[0];
 
-if (!i) {		//run once will have to change for more accurate but good enough ,keep it like that 
-adsr(); modulation();
+float freq_jump;
+
+
+if ((nxt_hold) && (i==nxt_hold)) { modulation();
+							
+}
+
+//if (((i+nxt_hold)&15)==0) adsr_store[3]=(adsr_store[3]*0.95f)+(adsr_level[3]* 0.05f);  // needs this or bad zipper noise 
+//adsr();
+
+if (!i) {	adsr();	//run once will have to change for more accurate but good enough ,keep it like that 
+
 
 for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse 
 		note_tuned[mask_i]=note_sequence[mask_i]; // 0-7 notes
 	}
 
- sine_adder=sine_lut[note_tuned[5]];	//sets freq ,1.0594  * 16536 =17518  , not getting any info on note channel?
+ sine_adder=sine_lut[note_tuned[3]-1];	//sets freq ,1.0594  * 16536 =17518  , not getting any info on note channel?
 	sine_adder= (sine_adder*1200)>>10;  // modify different sample size , just need single cycle length and thats it
+ 	
+	
+ 
  }
 
 
@@ -1738,9 +1770,17 @@ for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse
 									 // sample section with float ,fairly quick  about 1ms ,goes to sample accu[2]
 										float s_temp; // hold float out 0-512 different speeds , i is ref pos
 										float s_temp2;
-										float freq_jump= freq_lookup+sample_build[0];  //add to accu pointer ,freq lookup=note_channel[3 ]
-										sample_build[0]=freq_jump;  //store
+									
 										
+						//	if 	((sample_accus[3]>-100) || (sample_accus[3]<100))   {
+								//		freq_jump= freq_lookup+sample_build[0];  //add to accu pointer ,freq lookup=note_channel[3 ]but only on zero cross ? 
+								//		sample_build[0]=freq_jump;  //store, 
+						//	}  // zero cross, reasonable
+							//sample_build[0]=freq_jump;
+							freq_jump= freq_lookup+sample_build[0];  // full speed
+							sample_build[0]=freq_jump;
+							
+							
 										uint32_t freq_jump2=freq_jump; // int value 
 										float s_frac= freq_jump2-freq_jump; // get frac part
 										
@@ -1751,7 +1791,7 @@ for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse
 									
 									s_temp= s_bit1+ (s_frac* (s_bit2-s_bit1));  // y1-y0 , good
 										sample_accus[3]= s_temp;
-										
+									if	(freq_jump==0) sample_accus[3]=0; // in case 
 										sample_Accu[3]=sample_accus[3]; // push up
 										sample_Accu[2] = (sample_Accu[3]*cross_fade[2]);			//27b, 2 out f2  might do a crossfade here using pot 3
 
@@ -1786,11 +1826,15 @@ if ((i==(nxt_hold-1))&&(nxt_hold)) lfo(); // run lfo here at correct point but o
 		float accu_2=filter_accus[2];
 					
 
-sample_Accu[1]=temp_samplehold[i<<1]; 
+sample_Accu[1]=temp_samplehold[i<<1]>>16; 
 
 //filter_accus[1]=sample_Accu[1]+((filter_hold[0])*0.5);// disable for now
-		accu_0= sample_Accu[1]*adsr_level[3]; //ok
-				accu_1=(accu_0*pole_1)+(pole_2*accu_1);  //  cut down to 12 db
+		
+		accu_0= (sample_Accu[1]*adsr_set[((next_isr&15)*8)+(i>>6)]);  // 0-127 ,1 note length of data 
+		//accu_0= sample_Accu[1]*adsr_store[3]; //ok
+		//accu_0= sample_Accu[1];
+		
+		accu_1=(accu_0*pole_1)+(pole_2*accu_1);  //  cut down to 12 db
 		accu_2=(accu_1*pole_1)+(pole_2*accu_2);
 		sample_Accu[0] =accu_2; 
 	
@@ -1805,7 +1849,9 @@ sample_Accu[3]=temp_samplehold[(i<<1)+1];
 		float accu_3=filter_accus[3];
 		float accu_4=filter_accus[4];
 		
-		accu_0= sample_Accu[3]*adsr_level[3];
+		//	accu_0= (sample_Accu[3]*adsr_set[i>>1])>>16;
+		//accu_0= sample_Accu[3]*adsr_store[3];
+		accu_0= sample_Accu[3];
 		accu_3=(accu_0*pole_1)+(pole_2*accu_3);  //  cut down to 12 db
 		accu_4=(accu_3*pole_1)+(pole_2*accu_4);
 			filter_accus[3]=accu_3;
@@ -1843,7 +1889,7 @@ sample_Accu[3]=temp_samplehold[(i<<1)+1];
 								filter_Accu=0;
 								
 									filter_Accu=(sample_Accu[0]+sample_Accu[2])>>8; //filter + drum out
-									 
+									 //filter_Accu=(sample_Accu[2])>>8; //filter + drum out
 										//filter_Accu=__SMLAD(sample_Accu[2],multi_ply,0) ;  // try signed 2x 16bit + 2x16 +31accu   (filter)
 									//filter_Accu=((filter_Accu<<16)>>16) + (filter_Accu>>16); // 16 bit end
 								
@@ -1861,16 +1907,15 @@ sample_Accu[3]=temp_samplehold[(i<<1)+1];
 bank_write=0;
 
 //feedback info
-//lcd_out3=sys_count&511; //read ticker  *140uS   /measuring sampling total lenght
-lcd_out3=mod_target[0]>>5;
+lcd_out3=sys_count&511; //read ticker  *140uS   /measuring sampling total lenght
+//lcd_out3=mod_target[0]>>5;
 potSource[160]=(lcd_out3/100)*16;
 potSource[161]=((lcd_out3 %100)/10)*16;		 // 0-160 to 0-10
 potSource[162]=(lcd_out3%10)*16;
 sys_count=0;
 
 
-
-
+//if (gfx_enable==1) {HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)gfx_lcd, 387);gfx_enable=0;} //gfx update halted until this is sent
 } // end of sampling
 
 
@@ -1966,35 +2011,60 @@ freq_point[2]=k_hold1*0.00006435f;
 void adsr(void){
 	float note_attack;  //attack length 50/50 , just a default shape that is maybe interpolated , store values for both and position, time in isr 
 	float note_sustain; //sustaing lenght and height 80/20 / 0-160 0-1-sustain-0  160 is 160 steps(10 notes) 80+80  0+(1/(attack/2))*(attack/2) 1-(1/(attack/2))*(attack/2)+sustain level 1/160*sustain at (1/sustain)*time
-	//uint16_t adsr_countup[11];  //holds isr count on notes , 
+	//uint16_t adsr_countup[11];  //holds isr count on notes , only using this to calculate 
 	//float adsr_level[11]; //float for vol envelope  ,ps 20 21
-	uint8_t ad;//counter    0-160-160-160 maybe change 1/10 dunno 
-	float as_attack=potSource[20]*0.1; // for now
+	uint8_t ad=5;//counter    0-160-160-160 maybe change 1/10 dunno 
+	float as_attack=(potSource[20]*0.1f)+0.1f; // for now
+	//float as_attack=potSource[20];
+	
 	float as_sustain=potSource[21];
 	uint16_t as_temp; 
+	uint8_t ad_2;  // 0-127
+//as_temp=1;
+	
+for (ad_2=0;ad_2<128;ad_2++) {	// create 256 step *10 
+	
+//for (ad=0;ad<2;ad++){							// envelope generator,not controlled from elsewhere yet just potsource,needs to be faster ,maybe run occasionally but fill up 
 	
 	
+	as_temp=adsr_countup[1]; 
+	//if (note_channel[ad]) {as_temp=1;note_channel[ad]=0; } // reset on note & 1 isr length ,retrigger also clear not for later ,needs zero cross
+	//if (note_channel[ad]) {as_temp=1;}
 	
-for (ad=0;ad<10;ad++){							// envelope generator,not controlled from elsewhere yet just potsource,needs to be faster 
-	as_temp =adsr_countup[ad]; //grab counter
+//	if (as_temp) {
+	//if (as_temp<(as_attack))    note_attack=(1/as_attack)*as_temp; //count up attack ok 
+	//if (as_temp>=(as_attack))    note_attack=1-((1/as_attack)*(as_temp-as_attack)); //count down attack
 	
-	if (note_channel[ad]) {as_temp=1;note_channel[ad]=0; } // reset on note & 1 isr length ,retrigger also clear not for later
-	if (as_temp) {
-	if (as_temp<(as_attack))    note_attack=(1/as_attack)*as_temp; //count up attack ok 
-	if (as_temp>=(as_attack))    note_attack=1-((1/as_attack)*(as_temp-as_attack)); //count down attack
+	if (as_temp<160)    note_attack=(0.00625f)*as_temp; //count up attack ok 
+	if (as_temp>=160)    note_attack=2-((0.00625f)*(as_temp));
+	
+	
 	if(note_attack<0) note_attack=0; // stop at 0
-	note_sustain=as_sustain*0.00625;
-	if ((as_temp>=(as_attack)) && (note_sustain>note_attack)) note_attack=note_sustain; // change over to sustain level
+	note_sustain=as_sustain*0.00625f;
+//	if ((as_temp>=40) && (note_sustain>note_attack)) note_attack=note_sustain; // change over to sustain level
 	
-	if (as_temp>=(as_attack+(as_sustain*0.3))) {note_attack= 0;  as_temp=0; }else as_temp++; // no roll off for now just straight to 0 , shortened , also stops 
+	//if (as_temp>=(40+(as_sustain*0.3f))) {note_attack= 0;  as_temp=0; }else as_temp++; // no roll off for now just straight to 0 , shortened , also stops 
+	if (as_temp>=300) {note_attack= 0;  as_temp=0; }else as_temp++;
 	
-	adsr_level[ad]=note_attack;
 	
-	adsr_countup[ad]=as_temp; //write back new value
-	} 
+	adsr_set[ad_2]=note_attack*16383;  // output 
+	
+	adsr_countup[1]=as_temp; //write back new value
+	//= as_temp*16383; 
+	
+//	} 
 
-}	
+//} // ad	
+
+} //ad2 
+
+
 }
+
+
+
+
+
 
 
 /*
