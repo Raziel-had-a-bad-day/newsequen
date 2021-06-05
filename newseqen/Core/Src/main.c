@@ -650,6 +650,9 @@ uint16_t next_frame[6];  // i values 4* per  round
 uint16_t adsr_set[258];  // 10*256 steps 
 uint16_t adsr_countup[258];  //holds isr count on notes , 
 float adsr_level[11]; //float for vol envelope  ,ps 20 21  , weird with floats if not zeroed 
+uint8_t as_step2[4]={0,0,0,0,0}; // keep track of adsr position 1=a 2=d 3=s 4=r 0=off 
+
+
 
 //  USE THE BREAK WITH SWITCH STATEMENT MORON!!!
 
@@ -1709,7 +1712,7 @@ if ((nxt_hold) && (i==nxt_hold)) { modulation();
 //if (((i+nxt_hold)&15)==0) adsr_store[3]=(adsr_store[3]*0.95f)+(adsr_level[3]* 0.05f);  // needs this or bad zipper noise 
 //adsr();
 
-if (!i) {	adsr();	//run once will have to change for more accurate but good enough ,keep it like that 
+if (!i) {		//30x or 1mS 
 
 
 for (mask_i=0;mask_i<8;mask_i++)	{							// only temp reverse 
@@ -1806,7 +1809,7 @@ if (sine_counterB>(sine_length<<5)) sine_counterB=0; //fixed for now
 sample_Accu[0] = sine_out*cross_fade[1];
 
 	temp_samplehold[i<<1]=sample_Accu[0]; // write  to temp bank
-	temp_samplehold[(i<<1)+1]=sample_Accu[2]; 
+	temp_samplehold[(i<<1)+1]=sample_Accu[2];   // ok
 	
 	
 
@@ -1815,7 +1818,7 @@ sample_Accu[0] = sine_out*cross_fade[1];
 for (i=0;i<512;i++) { 		//add fx,lfo and final output
 
 i_total=i+sample_pointB; // sample counter for output 0-511 or 512-1023
-
+if ((i&31)==0) 	adsr();  // 1ms min attack
 // filters add was 4ms now its about 1ms
 if ((i==(nxt_hold-1))&&(nxt_hold)) lfo(); // run lfo here at correct point but only if triggered  ,tracks next_isr changes
 
@@ -1826,12 +1829,12 @@ if ((i==(nxt_hold-1))&&(nxt_hold)) lfo(); // run lfo here at correct point but o
 		float accu_2=filter_accus[2];
 					
 
-sample_Accu[1]=temp_samplehold[i<<1]>>16; 
-
+sample_Accu[1]=temp_samplehold[i<<1]; 
+//sample_Accu[1]=sample_Accu[1]+temp_samplehold[(i<<2)&1023];  // 1 oct down adder 
 //filter_accus[1]=sample_Accu[1]+((filter_hold[0])*0.5);// disable for now
 		
-		accu_0= (sample_Accu[1]*adsr_set[((next_isr&15)*8)+(i>>6)]);  // 0-127 ,1 note length of data 
-		//accu_0= sample_Accu[1]*adsr_store[3]; //ok
+		//accu_0= (sample_Accu[1]*adsr_set[((next_isr&15)*8)+(i>>6)]);  // 0-127 ,1 note length of data 
+		accu_0= sample_Accu[1]*adsr_store[3]; //ok
 		//accu_0= sample_Accu[1];
 		
 		accu_1=(accu_0*pole_1)+(pole_2*accu_1);  //  cut down to 12 db
@@ -1842,7 +1845,7 @@ sample_Accu[1]=temp_samplehold[i<<1]>>16;
 				filter_accus[2]=accu_2;
 		
 
-sample_Accu[3]=temp_samplehold[(i<<1)+1]; 
+		sample_Accu[3]=temp_samplehold[(i<<1)+1];   //echo 
 		
 		pole_1 = freq_point[2]; //using this is faster than array ref (11 instead of 13) 
 		 pole_2 = 1-pole_1;
@@ -1850,8 +1853,8 @@ sample_Accu[3]=temp_samplehold[(i<<1)+1];
 		float accu_4=filter_accus[4];
 		
 		//	accu_0= (sample_Accu[3]*adsr_set[i>>1])>>16;
-		//accu_0= sample_Accu[3]*adsr_store[3];
-		accu_0= sample_Accu[3];
+		accu_0= sample_Accu[3]*adsr_store[3];
+		//accu_0= sample_Accu[3];
 		accu_3=(accu_0*pole_1)+(pole_2*accu_3);  //  cut down to 12 db
 		accu_4=(accu_3*pole_1)+(pole_2*accu_4);
 			filter_accus[3]=accu_3;
@@ -2014,116 +2017,58 @@ void adsr(void){
 	//uint16_t adsr_countup[11];  //holds isr count on notes , only using this to calculate 
 	//float adsr_level[11]; //float for vol envelope  ,ps 20 21
 	uint8_t ad=5;//counter    0-160-160-160 maybe change 1/10 dunno 
-	float as_attack=(potSource[20]*0.1f)+0.1f; // for now
+	float as_attack=(potSource[20]*0.5f)+0.1f; // for now 0-160
+	float as_attack2=1/as_attack;  // 1>
+	
 	//float as_attack=potSource[20];
 	
-	float as_sustain=potSource[21];
+	float as_sustain=(potSource[21]*0.006f)+0.1f; //0-1 
+	float as_sustain2=	((1-as_sustain)*as_sustain)*0.03f;  // these can be done separate elsewhere 
+	uint8_t as_step=0; // keep track of adsr position 1=a 2=d 3=s 4=r 0=off 
 	uint16_t as_temp; 
+	uint16_t as_temp2; 
 	uint8_t ad_2;  // 0-127
+	note_sustain=as_sustain;
+
+
 //as_temp=1;
 	
-for (ad_2=0;ad_2<128;ad_2++) {	// create 256 step *10 
+for (ad_2=0;ad_2<5;ad_2++) {	
 	
-//for (ad=0;ad<2;ad++){							// envelope generator,not controlled from elsewhere yet just potsource,needs to be faster ,maybe run occasionally but fill up 
+						// envelope generator,not controlled from elsewhere yet just potsource,needs to be faster ,maybe run occasionally but fill up 
 	
+	as_temp=adsr_countup[ad_2]; 
+	if (note_channel[ad_2]) {as_temp=1;note_channel[ad_2]=0; } // reset on note & 1 isr length ,retrigger also clear not for later ,needs zero cross
 	
-	as_temp=adsr_countup[1]; 
-	//if (note_channel[ad]) {as_temp=1;note_channel[ad]=0; } // reset on note & 1 isr length ,retrigger also clear not for later ,needs zero cross
-	//if (note_channel[ad]) {as_temp=1;}
+	if (as_temp) {
 	
-//	if (as_temp) {
-	//if (as_temp<(as_attack))    note_attack=(1/as_attack)*as_temp; //count up attack ok 
-	//if (as_temp>=(as_attack))    note_attack=1-((1/as_attack)*(as_temp-as_attack)); //count down attack
-	
-	if (as_temp<160)    note_attack=(0.00625f)*as_temp; //count up attack ok 
-	if (as_temp>=160)    note_attack=2-((0.00625f)*(as_temp));
+	if (as_temp<(as_attack))    {note_attack=as_attack2*as_temp; as_step=1;}   //count up attack ok 
 	
 	
-	if(note_attack<0) note_attack=0; // stop at 0
-	note_sustain=as_sustain*0.00625f;
-//	if ((as_temp>=40) && (note_sustain>note_attack)) note_attack=note_sustain; // change over to sustain level
+	if (as_temp>=(as_attack)) {  as_step=2;  note_attack=1-(as_attack2*(as_temp-as_attack)); // ok 
+		
+	as_temp2= (as_sustain*as_attack*10);// sustain 
+
+	if (as_sustain>=note_attack)	if ( as_temp<=as_temp2)  {note_attack=as_sustain; as_step=3;}  else {note_attack=as_sustain-((as_temp-as_temp2)*as_sustain2); as_step=4;} // ok 
 	
-	//if (as_temp>=(40+(as_sustain*0.3f))) {note_attack= 0;  as_temp=0; }else as_temp++; // no roll off for now just straight to 0 , shortened , also stops 
-	if (as_temp>=300) {note_attack= 0;  as_temp=0; }else as_temp++;
-	
-	
-	adsr_set[ad_2]=note_attack*16383;  // output 
-	
-	adsr_countup[1]=as_temp; //write back new value
-	//= as_temp*16383; 
-	
-//	} 
-
-//} // ad	
-
-} //ad2 
-
-
-}
-
-
-
-
-
-
-
-/*
-void adsr(void){   //might start using this for lfos or dump the lot
-	adsr_retrigger[6]=1; //for filter
-	adsr_retrigger[7]=1; //for filter 2
-	//adsr_retrigger[5]=1;  //kick
-
-	uint8_t mask_i;
-
-
-	uint8_t note_plain=potValues[seq_pos & 7 ];
-
-			// 16*64 max
-		if (!(next_isr	& ((1<<potValues[97]))) ) {note_channel[16]=1023;adsr_toggle[6]=0; }  // filter 2, retrigger on every note  on 0 duration nothing else
-		//if (!(next_isr	& 16 )) {note_channel[16]=1023;adsr_toggle[6]=0; }  // filter 2, retrigger on every note  on 0 duration nothing else
-
-	///	if (!(next_isr	& adsr_lut[potSource[97]]) ) {note_channel[16]=1023;adsr_toggle[6]=0; }  // filter 2, retrigger on every note  on short duration
-
-
-
-		if (!(next_isr	& ((1<<potValues[99]))))  {note_channel[17]=1023;adsr_toggle[7]=0; }  // filter 2, retrigger on every note  on short duration
-
-
-			if (!(next_isr	& ((8<<potValues[105])-1)))  {note_channel[10]=1023;adsr_toggle[0]=2; }   // retrigger for notes , needs however next note ?!
-				if (!(next_isr	& ((8<<potValues[106])-1)))  {note_channel[11]=1023;adsr_toggle[1]=2; } //might just skip the lot or just a very long retrigger ,doesnt change with notelenght
-				if (!(next_isr	& ((8<<potValues[107])-1)))  {note_channel[12]=1023;adsr_toggle[2]=2; }
-				if (!(next_isr	& ((8	<<potValues[108])-1)))  {note_channel[13]=1023;adsr_toggle[3]=2; }
-
-
-
-	for (mask_i=0;mask_i<10;mask_i++){   // retrigger
-		if ((adsr_toggle[mask_i]==2) && adsr_retrigger[mask_i])   {adsr_toggle[mask_i]=0;  adsr_retrigger[mask_i]=0;  }  // reset adsr
 	}
+	if(note_attack<=0) {note_attack= 0;  as_temp=0;as_step=0;  }else as_temp++; // stop at 0
 
+	adsr_store[ad_2]=note_attack;
+	//adsr_set[ad_2]=note_attack*16383;  // output 
+		adsr_countup[ad_2]=as_temp; //write back new value
+	//adsr_countup[ad_2]= as_temp*16383; 
+	as_step2[0]=as_step; // write back adsr position 
+	} 
 
-	for (adsr_up=0;adsr_up<10;adsr_up++) {   //calc adsr  done per next_isr tick ie 16*note  , note_channel[10+ can never be 0 or problem
+} // ad	
 
+//} //ad2 
 
-if  ((note_channel[10+adsr_up]<2047) && (adsr_toggle[0+adsr_up]==0))  note_channel[10+adsr_up]=note_channel[10+adsr_up] + adsr_lut[potSource[16+(adsr_up*2)]];  //attack
-if  ((note_channel[10+adsr_up]>1023) && (adsr_toggle[0+adsr_up]==1))  note_channel[10+adsr_up]=note_channel[10+adsr_up] - adsr_lut[potSource[17+(adsr_up*2)]];	// decay
-if  ((note_channel[10+adsr_up]>=2047) && (adsr_toggle[0+adsr_up]==0))	{adsr_toggle[0+adsr_up]=1;note_channel[10+adsr_up]=2047;}
-if  ((note_channel[10+adsr_up]<=1023) && (adsr_toggle[0+adsr_up]==1))	{adsr_toggle[0+adsr_up]=2; note_channel[10+adsr_up]=1023;}
 
 }
 
-//	printf("%d",note_channel[17]);
-//	printf("\n");
 
-// for (mask_i=0;mask_i<5;mask_i++)				// calculate velocities from mask now: on/off , has to be fast  , might disable
-			 {  mask_calc(potValues[(mask_i*2)+32], potValues[(mask_i*2)+33]); // this is ok
-					//note_channel[20+mask_i]=mask_result; // store mask output
-					note_vol[mask_i] =mask_result * (potSource[8 + mask_i]);
-					note_channel[20+mask_i] =((note_channel[mask_i+10]-1023)*note_vol[mask_i])>>8;  // * note_vol[t_ac] )>>8;
-
-			 }  // set vel per channel
-*/
-
-//
 
 void mask_calc(uint8_t mask_select,uint8_t mask_speed){    //calculate mask output from lfos
 uint8_t mask_temp;
@@ -2151,14 +2096,14 @@ sine_frac=sine_counterB & 31;  // grab last 5 bits, actual position for linear i
 
 	if (sine_counter>sine_length) sine_counter = sine_length;		// seems to be faster than using a for loop to calculate both values
 
-	sine_out = sine_block3[sine_counter];  // 0- 40000
+	if (as_step2[0]>2) sine_out = sine_block[sine_counter];  else sine_out = sine_block3[sine_counter];// 0- 40000
 	sine_tempA=sine_out; // grab first value , needs to be always plus
 	sine_tempA=sine_tempA-20000; //convert to signed
 
 	sine_counter++;
 	if (sine_counter>=sine_length)  sine_counter=0; // set to sample length
 
-			sine_out = sine_block3[sine_counter];  // grab second value
+			if (as_step2[0]>2) sine_out = sine_block[sine_counter];  else sine_out = sine_block3[sine_counter];  // grab second value ,switch wavs for decay ,bit heavy
 		
 		sine_tempB=sine_out; // grab first value
 			sine_tempB=sine_tempB-20000;  // convert to signed and +256 to -256
