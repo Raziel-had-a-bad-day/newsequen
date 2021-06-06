@@ -96,7 +96,7 @@ const uint16_t sample_Noteadd[50]= { 2059, 2181, 2311, 2448, 2594, 2748, 2912, 3
 //static unsigned short playWave;
 const uint16_t freq_lut[]={4186,4434,4698,4978,5274,5587,5919,6271,6644,7039,7458,7902,8371,8869,9397,9955,10547,11175,11839,12543,13289,14079,14916,15803,16743,17739,
 		18794,19911,21095,22350,23679,25087,26578,28160,29834,31608,33488,35479,37589,39824,42192,44701,47359,50175,53158,56319,59668,63216};  // freq lookup x64  64hz_>987hz , C2-C6 Note 1-48
-//const uint8_t disp_lut [18] [16]= {                    // menu look up
+uint8_t enc2_lut [257];  // encoder modifier for empty spaces ,use it to skip cursor position , 8 bit for now 
 const uint16_t disp_lut [18] [16]= {							 // menu look up using char
 
 
@@ -116,7 +116,7 @@ const uint16_t disp_lut [18] [16]= {							 // menu look up using char
 		{'D',64,268,64,269,64,270,64,271,64,271,64,272,64,273,64},   // lfo depth pV 140-149
 		{'G',64,278,64,279,64,280,64,281,64,282,64,283,64,284,64},	// lfo gain pV 150-159
 		{64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64},
-		{'F',64, 288, 289, 290,64, 64,64,64,64,64,64,64,64,64,64},   // feedback
+		{64,64, 64, 64, 64,64, 64,64,64,64,64,64,64,288,289,290},   // feedback
 		
 //P2
 		{'M','L',64,'I',64,'G',64,'I',64,'G',64,'I',64,'G',64,64}, // modulator selection and level , input pV 30 -44 , level  pV45- 60 ?  
@@ -126,7 +126,7 @@ const uint16_t disp_lut [18] [16]= {							 // menu look up using char
 		{'P','2',64,167,64,182,64,168,64,183,64,169,64,184,64,64},
 		{'P','3',64,170,64,185,64,171,64,186,64,172,64,187,64,64},					//p6
 		{64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64},
-		{'F',64, 288, 289, 290,64, 64,64,64,64,64,64,64,64,64,64},   // feedback
+		{64,64, 64, 64, 64,64, 64,64,64,64,64,64,64,288,289,290},   // feedback
 		
 //P3		
 				
@@ -136,15 +136,27 @@ const uint16_t disp_lut [18] [16]= {							 // menu look up using char
 
 };
 
-const char popup_lut [13][10]= { "Pitch     " , "Attack    ","Sustain   ","LFO Speed ","LFO Gain  ","Tempo     " ,"LPF1      ","LPF2      ","Pitch 1   " ,"Pitch 2   ","          ","empty     "}; // info line 
-const uint8_t popup_ref[8][16]={	// reference for feedback
+const char popup_lut [18][10]= { "Pitch:    " , "Attack:   ","Sustain:  ","LFO Speed:","LFO Depth:","LFO Gain:" ,"Tempo:    ","LPF2      ","Pitch 1   " ,"Pitch 2   ","          ",
+"empty     ","Mod input:","Mod gain: ","Mod matrix","Filter 1 ","Filter 2 ", };
+const char popup_lut2  [11][5]={ "Zero ","LFO 1","LFO 2","LFO 3", "Seq P","Note2 ","Note3","Note5","ADSR3",	"    ","     ",	}; // info line  instead of value 
+ const uint8_t popup_ref[16][16]={	// reference for feedback
 	{11,11,10,10,10,10,10,10,10,10,10,10,10,10,10,10}, 
-{10,10,0,0,0,0,0,10,10,10,10,10,10,10,10,10},
+{10,10,0,0,0,0,0,10,10,10,10,1,2,10,6,6},
 {10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10}, 
-{10,10,10,1,2,10,10,10,10,10,10,10,10,10,5,5}, 
 {10,10,3,3,3,3,3,3,3,3,3,3,3,10,10,10}, 
 {10,10,4,4,4,4,4,4,4,4,4,4,4,10,10,10}, 
+{10,10,5,5,5,5,5,5,5,5,5,5,5,10,10,10}, 
 {10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10}, 
+{10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10},
+{14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14},
+
+{15,15,10,12,10,13,10,12,10,13,10,12,10,13,10,10},
+{16,16,10,12,10,13,10,12,10,13,10,12,10,13,10,10},
+{8,8,10,12,10,13,10,12,10,13,10,12,10,13,10,10},
+{9,9,10,12,10,13,10,12,10,13,10,12,10,13,10,10},
+{10,10,10,12,10,13,10,12,10,13,10,12,10,13,10,10},
+
+
 {10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10} }; 
 
 
@@ -643,6 +655,7 @@ uint8_t gfx_enable=0;
 volatile uint8_t spi_ticker=0;
 
 uint16_t lcd_out3; //for feedback
+uint8_t lcd_out4; //for feedback
 uint16_t mod_source[10]; //all inputs list 10 for now lfo 1-5 pitch and AS 
 	uint16_t mod_target[16]; // all destination values  pV30-44 inp select 
 	uint8_t mod_gain[16]; // gain multiplier 0-1 or maybe some overload pV 45-60  gain multiplier
@@ -794,6 +807,13 @@ for (n=0;n<64;n++)	{
 init_b=n;
 
 displayBuffer();
+}
+
+
+uint8_t enc_ups=0; 
+for (i=0;i<256;i++){   // write cursor skip lut 
+if ((disp_lut [i>>4] [i&15] !=64) && (enc_ups<255))		{enc2_lut[enc_ups]= i;enc_ups++;  } //  ok 
+
 }
 
 menuSelect=0;
@@ -1386,7 +1406,7 @@ uint16_t menu_holder;
 
 		menu_holder=disp_lut [menuSelect] [menuSelectX];   // value from disp lut
 		cursor_menu[1]=0;
-			cursor_menu[2]=enc2_dir;
+			cursor_menu[2]=enc2_lut[enc2_dir]; // using lut for cursor position 
 			if (menu_holder>127)	counterVarB=menu_holder-128; //  points to actual potvalues location from dsip_lut when value is higher than 127 , works ok problem with menu display
 				enc_dir=potSource[counterVarB];
 
@@ -1531,18 +1551,18 @@ uint16_t store_x;
 
 
 store_c= disp_lut [(init_b+(cursor_menu[2]&128))>>4]  [init_y] ;  //gets potvalues pointer from menus ,works for multiple pages
-if (init_b==enc2_dir) {lcd_out3=potSource[store_c-128];popup_ref2=popup_ref[init_b>>4] [init_b&15]; }// get pointer for feedback input, need to fix for other pages
+if (init_b==(cursor_menu[2]&127)) {lcd_out3=potSource[store_c-128];lcd_out4=potValues[store_c-128];popup_ref2=popup_ref[cursor_menu[2]>>4] [init_b&15]; }// get pointer for feedback input, need to fix for other pages
 
 // process data , all pages ok
 	 if (store_c==64) store_c=47;
 	if ((store_c>127)&& (store_c<255))  {store_c= potValues[store_c&127]+48;}		// sets data or stored
 	if (store_c>254){store_c= potValues[store_c-128]+48;}
 
-if (init_b>117)  store_c=popup_lut[popup_ref2][init_b-118]; // copy text to feedback location end of page
-
+if ((init_b>111)&&(init_b<122))  store_c=popup_lut[popup_ref2][init_b-112]; // copy text to feedback location end of page
+if ((init_b>122)&& (popup_ref2==12))  store_c=popup_lut2[lcd_out4][init_b-123]; // write info or leave cursor value 
 store_c=store_c-47; store_c = store_c &127;	  // spell no longer 
 
-if ((seq_pos&1) && (init_b==(enc2_dir&127))) {if (store_c) {  store_c=0;} else store_c=48;}   // blinker works ok
+if ((seq_pos&1) && (init_b==(cursor_menu[2]&127))) {if (store_c) {  store_c=0;} else store_c=48;}   // blinker works ok
 
 
 store_x=(store_c*8);
@@ -1617,6 +1637,8 @@ uint8_t fader[17]={0,1,5,11,19,28,39,51,64,76,88,99,108,116,122,126,127}; // sin
 if(adc_values[2]&16)	{cross_fade[1]=127-fader[adc_values[2]&15]; cross_fade[2]=127;}  else {cross_fade[2]=fader[adc_values[2]&15]; cross_fade[1]=127;} //calculate crossfader
 // doing lfo calc here as it is slow only for now
 uint16_t nxt_hold=0; //just keep the actual next_isr sample position during i loop for the rest of sampling loop , will only trigger if true 
+uint8_t seq_arp[65]= {1,4,2,4,3,4,2,4,1,2,3,2,4,3,4,1,2,3,4,8,7,6,5,1,2,3,4,5,6,7,8};  // arpeggiator 
+
 
 ///////////////////////////////////////////////////////////////
 
@@ -1649,18 +1671,22 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 		potValues[63]=adc_values[1]>>1;
 
 
+		
 		seq_loop[2]=((potValues[62]+(seq_pos&7))&15); // calc  8 note loop positions sets looping point in sequence
 		
 		//seq_loop[3]=(potValues[33]+(( seq_pos&31 ) >>2)) & 15;  // quater speed
-			seq_loop[3]=((potValues[63]+(seq_pos&15))&15); //sets looping point in sequence this is full 16 note
+			seq_loop[3]=((potValues[63]+seq_arp[seq_pos&7])&15); //sets looping point in sequence this is full 16 note
 		
-			seq_loop[4]=((potValues[62]+(seq_pos&7))&15);
 			
+			
+			seq_loop[4]=((potValues[62]+seq_arp[seq_pos&7])&15);  // progress modifier 
+		// create luts for note progression ie 14243424 or 12132434 or 12345678 and then move by 1-2-4 	
+		
 		//seq_loop[4]=((potValues[32]+((seq_pos&15)>>1))&15); // half speed
 
 		note_channel[2]=potValues[80+seq_loop[2]]+potValues[72];  //loop 8 notes from pos and x times
 		note_channel[3]=potValues[seq_loop[3]];  //loop 8 notes from pos and x times ,might disable normal adsr completely
-	if (note_channel[3]) note_channel[3]=note_channel[3]+(potSource[73]/4)+(lfo_out[2]>>11); // stay at zero for off
+	if (note_channel[3]) note_channel[3]=note_channel[3]+(potSource[73]/4); // stay at zero for off
 	
 	
 	if (note_channel[3]>48) note_channel[3]=48; //limit
@@ -1669,7 +1695,7 @@ potValues[i&255]=potSource[i&255]>>4; //just to update values
 	
 	note_holdB=potValues[80+seq_loop[2]]+(potValues[74]);  //  first seq line
 	
-	note_holdB=(note_holdB-4)+(lfo_out[2]>>11);
+	note_holdB=(note_holdB-4);
 	
 	if (note_holdB)   note_channel[5]=note_holdB+12;  // only note on 
 	if (note_channel[5]>48) note_channel[5]=48; //limit
@@ -1818,7 +1844,7 @@ sample_Accu[0] = sine_out*cross_fade[1];
 for (i=0;i<512;i++) { 		//add fx,lfo and final output
 
 i_total=i+sample_pointB; // sample counter for output 0-511 or 512-1023
-if ((i&31)==0) 	adsr();  // 1ms min attack
+if ((i&31)==0) 	adsr();  // 1ms min attack ,same spot as output or issues 
 // filters add was 4ms now its about 1ms
 if ((i==(nxt_hold-1))&&(nxt_hold)) lfo(); // run lfo here at correct point but only if triggered  ,tracks next_isr changes
 
@@ -1910,8 +1936,8 @@ sample_Accu[1]=temp_samplehold[i<<1];
 bank_write=0;
 
 //feedback info
-lcd_out3=sys_count&511; //read ticker  *140uS   /measuring sampling total lenght
-//lcd_out3=mod_target[0]>>5;
+//lcd_out3=sys_count&511; //read ticker  *140uS   /measuring sampling total lenght
+lcd_out3=mod_target[0]>>4;
 potSource[160]=(lcd_out3/100)*16;
 potSource[161]=((lcd_out3 %100)/10)*16;		 // 0-160 to 0-10
 potSource[162]=(lcd_out3%10)*16;
@@ -1933,15 +1959,16 @@ void modulation(void){				// select modulation input for filters notes volume et
 	uint8_t mi;  // var count
 	
 	
+	
 	for (mi=0;mi<15;mi++){
 		mod_gain[mi]=potSource[mi+45];
 		
 		switch (potValues[mi+30]) {  //sort inputs 
-		case 0:mod_temp=lfo_out[0];break;
-		case 1:mod_temp=lfo_out[1];break;
-		case 2:mod_temp=lfo_out[2];break;
-		case 3:mod_temp=lfo_out[3];break;
-		case 4:mod_temp=lfo_out[4];break;
+		case 0:mod_temp=0;break; //bypass
+		case 1:mod_temp=lfo_out[0];break;
+		case 2:mod_temp=lfo_out[1];break;
+		case 3:mod_temp=lfo_out[2];break;
+		case 4:mod_temp=(seq_pos<<5);break;   // maybe add seq_pos as well,speed ,depths etc
 		case 5:mod_temp=note_tuned[2]<<8;break;
 		case 6:mod_temp=note_tuned[3]<<8;break;
 		case 7:mod_temp=note_tuned[5]<<8;break;
@@ -1956,8 +1983,10 @@ void modulation(void){				// select modulation input for filters notes volume et
 	}
 	
 for (mi=0;mi<15;mi=mi+3){		// average out 3 values the others are left as is 
-mod_target[mi]=(mod_target[mi]+mod_target[mi+1]+mod_target[mi+2])>>2;
 
+ mod_temp=(mod_target[mi]+mod_target[mi+1]+mod_target[mi+2]);
+
+mod_target[mi]=__SSAT(mod_temp,15); // clip again  this is signed so -1 bit 
 }
 
 } // pretty light as well
@@ -1998,13 +2027,13 @@ lfo_out[l]=freq_temp; // all ok
 } // lfo gen : 0=f1 , 1=tempo,2=pitch
 
 
-	float k_hold=mod_target[0];
-	float k_hold1=mod_target[3]; // 3 sets per output
+	float k_hold=16383-mod_target[0];
+	float k_hold1=16383-mod_target[3]; // 3 sets per output
 	// pole_1=(3.6*k_hold) - (1.6*k_hold*k_hold) -1; // tune for a linear input,dunno ,not much ?
 	
-	freq_point[0]=k_hold*0.00006435f; //sine seem to overload at fully open but only with filter engaged 
+	freq_point[0]=k_hold*0.00006103f; //sine seem to overload at fully open but only with filter engaged 
 
-freq_point[2]=k_hold1*0.00006435f;
+freq_point[2]=k_hold1*0.00006103f;
 	//potSource[150]=(freq_point[0])*100; //0-2
 
 
@@ -2058,7 +2087,7 @@ for (ad_2=0;ad_2<5;ad_2++) {
 	//adsr_set[ad_2]=note_attack*16383;  // output 
 		adsr_countup[ad_2]=as_temp; //write back new value
 	//adsr_countup[ad_2]= as_temp*16383; 
-	as_step2[0]=as_step; // write back adsr position 
+	if (ad_2==3)  as_step2[0]=as_step; // write back adsr position 
 	} 
 
 } // ad	
